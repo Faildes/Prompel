@@ -1,5 +1,6 @@
+import torch
 import math
-
+import re
 re_attention = re.compile(r"""
 \\\(|
 \\\{|
@@ -279,6 +280,26 @@ def apply_tag_weight(pipe, tag_name, path_dict, input_str, found_callback):
             input_str = re.sub(pattern, "", input_str, count=1)
             matched = re.search(pattern, input_str)
     return input_str
+
+def apply_tag_weight(pipe, tag_name, path_dict, input_str, found_callback):
+    for name, path in path_dict.items():
+        pattern = "<"+tag_name+":(" + re.escape(name) + "):([^:]+)>"
+        matched = re.search(pattern, input_str)
+        while matched:
+            weight = matched.group(2)
+            if "|" in weight:
+                apply_lora_lbw(pipe,path,weight)
+            else:
+                found_callback(pipe, path, float(weight))
+            
+            input_str = re.sub(pattern, "", input_str, count=1)
+            matched = re.search(pattern, input_str)
+    return input_str
+    
+def apply_lora(pipe, path, weight):
+    te = pipe.text_encoder
+    unet = pipe.unet
+    merge_lora_to_pipeline(pipe.text_encoder, pipe.unet, util.load_state_dict(path), weight)
 
 def lora_prompt(prompt, pipe, lhash):
     loras = []
