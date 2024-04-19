@@ -351,7 +351,7 @@ def apply_lora(pipe, path, weight):
     unet = pipe.unet
     merge_lora_to_pipeline(pipe.text_encoder, pipe.unet, util.load_state_dict(path), weight)
 
-def lora_prompt(prompt, pipe, lpath):
+def lora_prompt(prompt, pipe, lpath, lhash):
     loras = []
     adap_list=[]
     alphas=[]
@@ -400,17 +400,17 @@ def lora_prompt(prompt, pipe, lpath):
         except:
             lhash[name] = sha256(k[0], name, True)[0:10]
     pipe.set_adapters(adap_list, adapter_weights=alphas)
-    return prompt, lpath
+    return prompt, lpath, lhash
     
-def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, clip_skip = 1):
+def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, lhash, clip_skip = 1):
     positive = apply_embeddings(pipe, positive, epath)
     negative = apply_embeddings(pipe, negative, epath)
  
-    positive, lora_list = lora_prompt(positive, pipe, lora_list)
+    positive, lora_list, lhash = lora_prompt(positive, pipe, lora_list, lhash)
 
     positive_cond, negative_cond = text_embeddings(pipe, positive, negative, clip_skip)
     
-    return (lora_list, {
+    return ({
         'prompt_embeds': positive_cond,
         'negative_prompt_embeds': negative_cond,
-    })
+    }, lhash, lora_list)
