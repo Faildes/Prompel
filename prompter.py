@@ -1,6 +1,8 @@
 import torch
 import math
 import re
+from block_lora import lbw_lora
+
 re_attention = re.compile(r"""
 \\\(|
 \\\{|
@@ -20,7 +22,51 @@ re_attention = re.compile(r"""
 [^\\()\\{}\[\]:]+|
 :
 """, re.X)
+re_AND = re.compile(r"\bAND\b")
+re_weight = re.compile(r"^((?:\s|.)*?)(?:\s*:\s*([-+]?(?:\d+\.?|\d*\.\d+)))?\s*$")
+re_break = re.compile(r"\s*\bBREAK\b\s*", re.S)
 
+class SdConditioning(list):
+    """
+    A list with prompts for stable diffusion's conditioner model.
+    Can also specify width and height of created image - SDXL needs it.
+    """
+    def __init__(self, prompts, is_negative_prompt=False, width=None, height=None, copy_from=None):
+        super().__init__()
+        self.extend(prompts)
+
+        if copy_from is None:
+            copy_from = prompts
+
+        self.is_negative_prompt = is_negative_prompt or getattr(copy_from, 'is_negative_prompt', False)
+        self.width = width or getattr(copy_from, 'width', None)
+        self.height = height or getattr(copy_from, 'height', None)
+        
+def get_multicond_prompt_list(prompt: str):
+    res_indexes = []
+
+    prompt_indexes = {}
+    subprompts = re_AND.split(prompt)
+
+    indexes = []
+    for subprompt in subprompts:
+        match = re_weight.search(subprompt)
+
+        text, weight = match.groups() if match is not None else (subprompt, 1.0)
+
+        weight = float(weight) if weight is not None else 1.0
+
+        index = prompt_indexes.get(text, None)
+        if index is None:
+            index = len(prompt_flat_list)
+            prompt_flat_list.append(text)
+            prompt_indexes[text] = index
+
+        indexes.append((index, weight))
+
+    res_indexes.append(indexes)
+
+    return res_indexes, prompt_flat_list, prompt_indexes
 
 def parse_prompt_attention(text):
     """
@@ -75,18 +121,22 @@ def parse_prompt_attention(text):
 
         if text.startswith('\\'):
             res.append([text[1:], 1.0])
-        elif text == '(' or text == '{':
+        elif text == '(':
             round_brackets.append(len(res))
         elif text == '[':
             square_brackets.append(len(res))
-        elif weight is not None and len(round_brackets) > 0:
+        elif weight is not None and round_brackets:
             multiply_range(round_brackets.pop(), float(weight))
-        elif (text == ')' or text == '}') and len(round_brackets) > 0:
+        elif text == ')' and round_brackets:
             multiply_range(round_brackets.pop(), round_bracket_multiplier)
-        elif text == ']' and len(square_brackets) > 0:
+        elif text == ']' and square_brackets:
             multiply_range(square_brackets.pop(), square_bracket_multiplier)
         else:
-            res.append([text, 1.0])
+            parts = re.split(re_break, text)
+            for i, part in enumerate(parts):
+                if i > 0:
+                    res.append(["BREAK", -1])
+                res.append([part, 1.0])
 
     for pos in round_brackets:
         multiply_range(pos, round_bracket_multiplier)
@@ -301,7 +351,7 @@ def apply_lora(pipe, path, weight):
     unet = pipe.unet
     merge_lora_to_pipeline(pipe.text_encoder, pipe.unet, util.load_state_dict(path), weight)
 
-def lora_prompt(prompt, pipe, lhash):
+def lora_prompt(prompt, pipe, lpath):
     loras = []
     adap_list=[]
     alphas=[]
@@ -313,6 +363,7 @@ def lora_prompt(prompt, pipe, lhash):
             data = lpath[alias]
             mpath = data[1]
             dpath = data[0]
+            alias = data[2]
         except:
             return ""
         if "|" in num:
@@ -323,17 +374,15 @@ def lora_prompt(prompt, pipe, lhash):
             try:
               data = lpath[f"{alias}_{apply}"]
               loras.append([data[0], alpha])
-              return ""
+              return alias
             except:
               lpath[f"{alias}_{apply}"] = [npath, dpath]
-              %cd /content/apply-lora-block-weight/
-              !python apply_lora_block_weight.py {dpath} {npath} {apply}
-              %cd /content/
+              lbw_lora(dpath, npath, apply)
               dpath = npath
         else:
             alpha = float(num)
         loras.append([dpath, alpha])
-        return data[2]
+        return alias
     re_lora = re.compile("<lora:([^:]+):([^:]+)>")
     prompt = re.sub(re_lora, network_replacement, prompt)
     for k in loras:
@@ -351,18 +400,17 @@ def lora_prompt(prompt, pipe, lhash):
         except:
             lhash[name] = sha256(k[0], name, True)[0:10]
     pipe.set_adapters(adap_list, adapter_weights=alphas)
-    return prompt
-
-def create_conditioning(pipe, positive: str, negative: str, epath, clip_skip = 1):
-
+    return prompt, lpath
+    
+def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, clip_skip = 1):
     positive = apply_embeddings(pipe, positive, epath)
     negative = apply_embeddings(pipe, negative, epath)
  
-    positive = lora_prompt(positive, pipe, lhash)
+    positive, lora_list = lora_prompt(positive, pipe, lora_list)
 
     positive_cond, negative_cond = text_embeddings(pipe, positive, negative, clip_skip)
     
-    return {
+    return (lora_list, {
         'prompt_embeds': positive_cond,
         'negative_prompt_embeds': negative_cond,
-    }
+    })
