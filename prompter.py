@@ -1,7 +1,8 @@
 import torch
 import math
 import re
-from block_lora import lbw_lora
+import os
+from .block_lora import lbw_lora
 
 re_attention = re.compile(r"""
 \\\(|
@@ -351,7 +352,7 @@ def apply_lora(pipe, path, weight):
     unet = pipe.unet
     merge_lora_to_pipeline(pipe.text_encoder, pipe.unet, util.load_state_dict(path), weight)
 
-def lora_prompt(prompt, pipe, lpath, lhash):
+def lora_prompt(prompt, pipe, lpath):
     loras = []
     adap_list=[]
     alphas=[]
@@ -396,7 +397,7 @@ def lora_prompt(prompt, pipe, lpath, lhash):
         except:
           pass
     pipe.set_adapters(adap_list, adapter_weights=alphas)
-    return prompt, lpath, lhash
+    return prompt, lpath
     
 def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, clip_skip = 1):
     positive = apply_embeddings(pipe, positive, epath)
