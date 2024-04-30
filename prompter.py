@@ -197,7 +197,26 @@ class CLIPTextCustomEmbedder(object):
         remade_tokens = remade_tokens + [id_end] * tokens_to_add
         multipliers = multipliers + [1.0] * tokens_to_add
         return remade_tokens, fixes, multipliers, token_count
+    
+    def get_token_ids(self, texts):
+        if type(texts) == str:
+            texts=[texts]
+        token_ids_list = self.tokenizer(
+            texts,
+            truncation=False,
+            return_tensors=None)['input_ids']
+        return token_ids_list
 
+    def get_pooled(self, texts):
+        device = self.device
+        token_ids = self.get_token_ids(texts)
+        token_ids = torch.tensor(token_ids, dtype=torch.long).to(device)
+
+        text_encoder_output = self.text_encoder(token_ids, None, return_dict=True)
+        pooled = text_encoder_output.text_embeds
+
+        return pooled
+        
     def process_text(self, texts):
         if isinstance(texts, str):
             texts = [texts]
@@ -292,23 +311,45 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt):
     cond_len = cond_embeddings.shape[1]
     uncond_len = uncond_embeddings.shape[1]
     if cond_len == uncond_len:
-        return cond_embeddings, uncond_embeddings
+        return [cond_embeddings, uncond_embeddings]
     else:
         if cond_len > uncond_len:
             n = (cond_len - uncond_len) // 77
-            return cond_embeddings, torch.cat([uncond_embeddings] + [text_embedder("")]*n, dim=1)
+            return [cond_embeddings, torch.cat([uncond_embeddings] + [text_embedder("")]*n, dim=1)]
         else:
             n = (uncond_len - cond_len) // 77
-            return torch.cat([cond_embeddings] + [text_embedder("")]*n, dim=1), uncond_embeddings
+            return [torch.cat([cond_embeddings] + [text_embedder("")]*n, dim=1), uncond_embeddings]
         
-
-def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers=1):
+def text_pooled(text_embedder, positive, negative):
+    cond_embeddings = text_embedder.get_pooled(positve)
+    uncond_embeddings = text_embedder.get_pooled(negative)
+    cond_len = cond_embeddings.shape[1]
+    uncond_len = uncond_embeddings.shape[1]
+    if cond_len == uncond_len:
+        return [cond_embeddings, uncond_embeddings]
+    else:
+        if cond_len > uncond_len:
+            n = (cond_len - uncond_len) // 77
+            return [cond_embeddings, torch.cat([uncond_embeddings] + [text_embedder("")]*n, dim=1)]
+        else:
+            n = (uncond_len - cond_len) // 77
+            return [torch.cat([cond_embeddings] + [text_embedder("")]*n, dim=1), uncond_embeddings]
+        
+def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers, require_pooled):
     text_embedder = CLIPTextCustomEmbedder(tokenizer=pipe.tokenizer,
                                            text_encoder=pipe.text_encoder,
                                            device=pipe.text_encoder.device,
                                            clip_stop_at_last_layers=clip_stop_at_last_layers)
-    cond_embeddings, uncond_embeddings = text_embeddings_equal_len(text_embedder, prompt, negative_prompt)
-    return cond_embeddings, uncond_embeddings
+    res = text_embeddings_equal_len(text_embedder, prompt, negative_prompt)
+    nk = {"prompt_embeds":res[0],
+          "negative_prompt_embeds":res[1]}
+    if require_pooled:
+        resp = text_pooled(text_embedder, prompt, negative_prompt)
+        nk = {"prompt_embeds":res[0],
+              "pooled_prompt_embeds":resp[0],
+              "negative_prompt_embeds":res[1],
+              "negative_pooled_prompt_embeds":resp[1]}
+    return nk
 
 def apply_embeddings(pipe, input_str,epath):
     for name, path in epath.items():
@@ -318,39 +359,6 @@ def apply_embeddings(pipe, input_str,epath):
             pipe.load_textual_inversion(pretrained_model_name_or_path=path, token=name, local_files_only=True)
 
     return input_str
-
-def apply_tag_weight(pipe, tag_name, path_dict, input_str, found_callback):
-    for name, path in path_dict.items():
-        pattern = "<"+tag_name+":(" + re.escape(name) + "):([0-9.]+)>"
-        matched = re.search(pattern, input_str)
-        while matched:
-            weight = float(matched.group(2))
-
-            found_callback(pipe, path, weight)
-            
-            input_str = re.sub(pattern, "", input_str, count=1)
-            matched = re.search(pattern, input_str)
-    return input_str
-
-def apply_tag_weight(pipe, tag_name, path_dict, input_str, found_callback):
-    for name, path in path_dict.items():
-        pattern = "<"+tag_name+":(" + re.escape(name) + "):([^:]+)>"
-        matched = re.search(pattern, input_str)
-        while matched:
-            weight = matched.group(2)
-            if "|" in weight:
-                apply_lora_lbw(pipe,path,weight)
-            else:
-                found_callback(pipe, path, float(weight))
-            
-            input_str = re.sub(pattern, "", input_str, count=1)
-            matched = re.search(pattern, input_str)
-    return input_str
-    
-def apply_lora(pipe, path, weight):
-    te = pipe.text_encoder
-    unet = pipe.unet
-    merge_lora_to_pipeline(pipe.text_encoder, pipe.unet, util.load_state_dict(path), weight)
 
 def lora_prompt(prompt, pipe, lpath):
     loras = []
@@ -399,15 +407,10 @@ def lora_prompt(prompt, pipe, lpath):
     pipe.set_adapters(adap_list, adapter_weights=alphas)
     return prompt, lpath
     
-def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, clip_skip = 1):
+def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, clip_skip: int = 1, require_pooled: Union[bool, List[bool]] = False):
     positive = apply_embeddings(pipe, positive, epath)
     negative = apply_embeddings(pipe, negative, epath)
  
     positive, lora_list = lora_prompt(positive, pipe, lora_list)
-
-    positive_cond, negative_cond = text_embeddings(pipe, positive, negative, clip_skip)
-    
-    return ({
-        'prompt_embeds': positive_cond,
-        'negative_prompt_embeds': negative_cond,
-    }, lora_list)
+    embeds = text_embeddings(pipe, positive, negative, clip_skip, require_pooled)
+    return (embeds, lora_list)
