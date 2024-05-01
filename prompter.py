@@ -202,7 +202,7 @@ class CLIPTextCustomEmbedder(object):
         Returns the list and the total number of tokens in the prompt.
         """
 
-        parsed = prompt_parser.parse_prompt_attention(line)
+        parsed = parse_prompt_attention(line)
 
         tokenized = self.tokenize([text for text, _ in parsed])
 
