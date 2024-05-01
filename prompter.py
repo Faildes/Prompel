@@ -213,11 +213,36 @@ class CLIPTextCustomEmbedder(object):
         device = self.device
         token_ids = self.get_token_ids(texts)
         token_ids = torch.tensor(token_ids, dtype=torch.long).to(device)
+        remade_batch_tokens = token_ids
+        z = None
+        i = 0
+        while max(map(len, remade_batch_tokens)) != 0:
+            rem_tokens = [x[75:] for x in remade_batch_tokens]
 
-        text_encoder_output = self.text_encoder(token_ids, None, return_dict=True)
-        pooled = text_encoder_output.text_embeds
+            tokens = []
+            for j in range(len(remade_batch_tokens)):
+                if len(remade_batch_tokens[j]) > 0:
+                    tokens.append(remade_batch_tokens[j][:75])
+                else:
+                    tokens.append([self.tokenizer.eos_token_id] * 75)
+            rbt = [[self.tokenizer.bos_token_id] + x[:75] +
+                   [self.tokenizer.eos_token_id] for x in remade_batch_tokens]
+            tokens = torch.asarray(rbt).to(self.device)
+            outputs = self.text_encoder(
+                input_ids=tokens, output_hidden_states=True)
 
-        return pooled
+            if self.clip_stop_at_last_layers > 1:
+                z1 = self.text_encoder.text_model.final_layer_norm(
+                    outputs.hidden_states[-self.clip_stop_at_last_layers])
+            else:
+                z1 = outputs.last_hidden_state
+
+            z = z1 if z is None else torch.cat((z, z1), axis=-2)
+
+            remade_batch_tokens = rem_tokens
+            i += 1
+
+        return z
         
     def process_text(self, texts):
         if isinstance(texts, str):
