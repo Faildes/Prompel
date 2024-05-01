@@ -355,11 +355,11 @@ def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers, req
 
 def apply_embeddings(pipe, input_str,epath,isxl=False):
     if isxl:
+        from safetensors.torch import load_file
         for name, path in epath.items():
             new_string = input_str.replace(name,"")
 
             if new_string != input_str:
-                from safetensors.torch import load_file
                 state = load_file(path)
                 pipe.load_textual_inversion(pretrained_model_name_or_path=state["clip_g"], token=name, text_encoder=pipe.text_encoder_2, tokenizer=pipe.tokenizer_2, local_files_only=True)
                 pipe.load_textual_inversion(pretrained_model_name_or_path=state["clip_l"], token=name, text_encoder=pipe.text_encoder, tokenizer=pipe.tokenizer, local_files_only=True)
