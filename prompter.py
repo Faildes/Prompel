@@ -206,7 +206,7 @@ class CLIPTextCustomEmbedder(object):
 
         parsed = parse_prompt_attention(line)
 
-        tokenized = self.tokenizer([text for text, _ in parsed], truncation=False,add_special_tokens=False)["input_ids"]
+        tokenized = self.tokenizer([text for text, _ in parsed], truncation=False,add_special_tokens=False)
 
         chunks = []
         chunk = PromptChunk()
@@ -350,7 +350,7 @@ class CLIPTextCustomEmbedder(object):
             z = self.process_tokens(tokens, multipliers)
             zs.append(z)
 
-        if pool:
+        if pool and :
             return torch.hstack(zs), zs[0].pooled
         return torch.hstack(zs)
 
@@ -367,7 +367,8 @@ class CLIPTextCustomEmbedder(object):
                 outputs.hidden_states[-self.clip_stop_at_last_layers])
         else:
             z = outputs.last_hidden_state
-        pooled = getattr(z, "pooled", None)
+        pooled = getattr(z, 'pooled', None)
+        print(pooled)
         # restoring original mean is likely not correct, but it seems to work well
         # to prevent artifacts that happen otherwise
         batch_multipliers_of_same_length = [
