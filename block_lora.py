@@ -6,6 +6,7 @@ from safetensors.torch import save_file
 import hashlib
 from io import BytesIO
 import safetensors.torch
+from typing import Callable, Union, Optional
 
 
 re_digits = re.compile(r"\d+")
