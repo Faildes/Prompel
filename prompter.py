@@ -351,12 +351,21 @@ def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers, req
               "negative_pooled_prompt_embeds":resp[1]}
     return nk
 
-def apply_embeddings(pipe, input_str,epath):
-    for name, path in epath.items():
-        new_string = input_str.replace(name,"")
+def apply_embeddings(pipe, input_str,epath,isxl=False):
+    if isxl:
+        for name, path in epath.items():
+            new_string = input_str.replace(name,"")
 
-        if new_string != input_str:
-            pipe.load_textual_inversion(pretrained_model_name_or_path=path, token=name, local_files_only=True)
+            if new_string != input_str:
+                state = load_file(path)
+                pipe.load_textual_inversion(pretrained_model_name_or_path=state["clip_g"], token=name, text_encoder=pipe.text_encoder_2, tokenizer=pipe.tokenizer_2, local_files_only=True)
+                pipe.load_textual_inversion(pretrained_model_name_or_path=state["clip_l"], token=name, text_encoder=pipe.text_encoder, tokenizer=pipe.tokenizer, local_files_only=True)
+    else:
+        for name, path in epath.items():
+            new_string = input_str.replace(name,"")
+
+            if new_string != input_str:
+                pipe.load_textual_inversion(pretrained_model_name_or_path=path, token=name, local_files_only=True)
 
     return input_str
 
@@ -408,8 +417,8 @@ def lora_prompt(prompt, pipe, lpath):
     return prompt, lpath
     
 def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, clip_skip: int = 1, require_pooled: Union[bool, List[bool]] = False):
-    positive = apply_embeddings(pipe, positive, epath)
-    negative = apply_embeddings(pipe, negative, epath)
+    positive = apply_embeddings(pipe, positive, epath, isxl=(require_pooled != False))
+    negative = apply_embeddings(pipe, negative, epath, isxl=(require_pooled != False))
  
     positive, lora_list = lora_prompt(positive, pipe, lora_list)
     embeds = text_embeddings(pipe, positive, negative, clip_skip, require_pooled)
