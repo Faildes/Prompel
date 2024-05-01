@@ -347,7 +347,7 @@ class CLIPTextCustomEmbedder(object):
         for i in range(chunk_count):
             batch_chunk = [chunks[i] if i < len(chunks) else self.empty_chunk() for chunks in batch_chunks]
             tokens = [x.tokens for x in batch_chunk]
-            multipliers = [x.multipliers for x in batch_chunks]
+            multipliers = [x.multipliers for x in batch_chunk]
 
             z = self.process_tokens(tokens, multipliers)
             zs.append(z)
