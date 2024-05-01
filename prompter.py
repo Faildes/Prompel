@@ -350,7 +350,7 @@ class CLIPTextCustomEmbedder(object):
             z = self.process_tokens(tokens, multipliers)
             zs.append(z)
 
-        if pool and :
+        if pool:
             return torch.hstack(zs), zs[0].pooled
         return torch.hstack(zs)
 
