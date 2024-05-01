@@ -3,6 +3,7 @@ import math
 import re
 import os
 from .block_lora import lbw_lora
+from typing import Callable, Union, Optional
 
 re_attention = re.compile(r"""
 \\\(|
