@@ -2,6 +2,7 @@ import torch
 import math
 import re
 import os
+from safetensors.torch import load_file
 from .block_lora import lbw_lora
 from typing import Union, Optional, List, Tuple
 
