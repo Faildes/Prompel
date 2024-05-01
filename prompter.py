@@ -161,6 +161,18 @@ def parse_prompt_attention(text):
 
     return res
 
+class PromptChunk:
+    """
+    This object contains token ids, weight (multipliers:1.4) and textual inversion embedding info for a chunk of prompt.
+    If a prompt is short, it is represented by one PromptChunk, otherwise, multiple are necessary.
+    Each PromptChunk contains an exact amount of tokens - 77, which includes one for start and end token,
+    so just 75 tokens from prompt.
+    """
+
+    def __init__(self):
+        self.tokens = []
+        self.multipliers = []
+        self.fixes = []
 
 class CLIPTextCustomEmbedder(object):
     def __init__(self, tokenizer, text_encoder, device,
@@ -169,36 +181,98 @@ class CLIPTextCustomEmbedder(object):
         self.text_encoder = text_encoder
         self.token_mults = {}
         self.device = device
+        self.chunk_length = 75
+        self.id_start = self.tokenizer.bos_token_id
+        self.id_end = self.tokenizer.eos_token_id
+        self.id_pad = self.id_end
         self.clip_stop_at_last_layers = clip_stop_at_last_layers
 
+    def empty_chunk(self):
+        """creates an empty PromptChunk and returns it"""
+
+        chunk = PromptChunk()
+        chunk.tokens = [self.id_start] + [self.id_end] * (self.chunk_length + 1)
+        chunk.multipliers = [1.0] * (self.chunk_length + 2)
+        return chunk
+
     def tokenize_line(self, line):
-        def get_target_prompt_token_count(token_count):
-            return math.ceil(max(token_count, 1) / 75) * 75
+        """
+        this transforms a single prompt into a list of PromptChunk objects - as many as needed to
+        represent the prompt.
+        Returns the list and the total number of tokens in the prompt.
+        """
 
-        id_end = self.tokenizer.eos_token_id
-        parsed = parse_prompt_attention(line)
-        tokenized = self.tokenizer(
-            [text for text, _ in parsed], truncation=False,
-            add_special_tokens=False)["input_ids"]
+        parsed = prompt_parser.parse_prompt_attention(line)
 
-        fixes = []
-        remade_tokens = []
-        multipliers = []
+        tokenized = self.tokenize([text for text, _ in parsed])
+
+        chunks = []
+        chunk = PromptChunk()
+        token_count = 0
+        last_comma = -1
+
+        def next_chunk(is_last=False):
+            """puts current chunk into the list of results and produces the next one - empty;
+            if is_last is true, tokens <end-of-text> tokens at the end won't add to token_count"""
+            nonlocal token_count
+            nonlocal last_comma
+            nonlocal chunk
+
+            if is_last:
+                token_count += len(chunk.tokens)
+            else:
+                token_count += self.chunk_length
+
+            to_add = self.chunk_length - len(chunk.tokens)
+            if to_add > 0:
+                chunk.tokens += [self.id_end] * to_add
+                chunk.multipliers += [1.0] * to_add
+
+            chunk.tokens = [self.id_start] + chunk.tokens + [self.id_end]
+            chunk.multipliers = [1.0] + chunk.multipliers + [1.0]
+
+            last_comma = -1
+            chunks.append(chunk)
+            chunk = PromptChunk()
 
         for tokens, (text, weight) in zip(tokenized, parsed):
-            i = 0
-            while i < len(tokens):
-                token = tokens[i]
-                remade_tokens.append(token)
-                multipliers.append(weight)
-                i += 1
+            if text == 'BREAK' and weight == -1:
+                next_chunk()
+                continue
 
-        token_count = len(remade_tokens)
-        prompt_target_length = get_target_prompt_token_count(token_count)
-        tokens_to_add = prompt_target_length - len(remade_tokens)
-        remade_tokens = remade_tokens + [id_end] * tokens_to_add
-        multipliers = multipliers + [1.0] * tokens_to_add
-        return remade_tokens, fixes, multipliers, token_count
+            position = 0
+            while position < len(tokens):
+                token = tokens[position]
+
+                if token == self.comma_token:
+                    last_comma = len(chunk.tokens)
+
+                # this is when we are at the end of allotted 75 tokens for the current chunk, and the current token is not a comma. opts.comma_padding_backtrack
+                # is a setting that specifies that if there is a comma nearby, the text after the comma should be moved out of this chunk and into the next.
+                elif opts.comma_padding_backtrack != 0 and len(chunk.tokens) == self.chunk_length and last_comma != -1 and len(chunk.tokens) - last_comma <= 20:
+                    break_location = last_comma + 1
+
+                    reloc_tokens = chunk.tokens[break_location:]
+                    reloc_mults = chunk.multipliers[break_location:]
+
+                    chunk.tokens = chunk.tokens[:break_location]
+                    chunk.multipliers = chunk.multipliers[:break_location]
+
+                    next_chunk()
+                    chunk.tokens = reloc_tokens
+                    chunk.multipliers = reloc_mults
+
+                if len(chunk.tokens) == self.chunk_length:
+                    next_chunk()
+
+                chunk.tokens.append(token)
+                chunk.multipliers.append(weight)
+                position += 1
+
+        if chunk.tokens or not chunks:
+            next_chunk(is_last=True)
+
+        return chunks, token_count
     
     def get_token_ids(self, texts):
         if type(texts) == str:
@@ -247,54 +321,40 @@ class CLIPTextCustomEmbedder(object):
         if isinstance(texts, str):
             texts = [texts]
 
-        remade_batch_tokens = []
+        token_count = 0
         cache = {}
-        batch_multipliers = []
+        batch_chunks = []
         for line in texts:
             if line in cache:
-                remade_tokens, fixes, multipliers = cache[line]
+                chunks = cache[line]
             else:
-                remade_tokens, fixes, multipliers, _ = self.tokenize_line(line)
-                cache[line] = (remade_tokens, fixes, multipliers)
+                chunks, current_token_count = self.tokenize_line(line)
+                token_count = max(current_token_count, token_count)
+                cache[line] = chunks
 
-            remade_batch_tokens.append(remade_tokens)
-            batch_multipliers.append(multipliers)
+            batch_chunks.append(chunks)
 
-        return batch_multipliers, remade_batch_tokens
+        return batch_chunks, token_count
 
-    def __call__(self, text):
-        batch_multipliers, remade_batch_tokens = self.process_text(text)
-
+    def __call__(self, text, pool=False):
+        batch_chunks, token_count = self.process_text(text)
         z = None
         i = 0
-        while max(map(len, remade_batch_tokens)) != 0:
-            rem_tokens = [x[75:] for x in remade_batch_tokens]
-            rem_multipliers = [x[75:] for x in batch_multipliers]
+        zs = []
+        chunk_count = max([len(x) for x in batch_chunks])
+        for i in range(chunk_count):
+            batch_chunk = [chunks[i] if i < len(chunks) else self.empty_chunk() for chunks in batch_chunks]
+            tokens = [x.tokens for x in batch_chunk]
+            multipliers = [x.multipliers for x in batch_chunks]
 
-            tokens = []
-            multipliers = []
-            for j in range(len(remade_batch_tokens)):
-                if len(remade_batch_tokens[j]) > 0:
-                    tokens.append(remade_batch_tokens[j][:75])
-                    multipliers.append(batch_multipliers[j][:75])
-                else:
-                    tokens.append([self.tokenizer.eos_token_id] * 75)
-                    multipliers.append([1.0] * 75)
+            z = self.process_tokens(tokens, multipliers)
+            zs.append(z)
 
-            z1 = self.process_tokens(tokens, multipliers)
-            z = z1 if z is None else torch.cat((z, z1), axis=-2)
-
-            remade_batch_tokens = rem_tokens
-            batch_multipliers = rem_multipliers
-            i += 1
-
-        return z
+        if pool:
+            return torch.hstack(zs), zs[0].pooled
+        return torch.hstack(zs)
 
     def process_tokens(self, remade_batch_tokens, batch_multipliers):
-        remade_batch_tokens = [[self.tokenizer.bos_token_id] + x[:75] +
-                               [self.tokenizer.eos_token_id] for x in remade_batch_tokens]
-        batch_multipliers = [[1.0] + x[:75] + [1.0] for x in batch_multipliers]
-
         tokens = torch.asarray(remade_batch_tokens).to(self.device)
         # print(tokens.shape)
         # print(tokens)
@@ -306,7 +366,7 @@ class CLIPTextCustomEmbedder(object):
                 outputs.hidden_states[-self.clip_stop_at_last_layers])
         else:
             z = outputs.last_hidden_state
-
+        pooled = getattr(z, "pooled", None)
         # restoring original mean is likely not correct, but it seems to work well
         # to prevent artifacts that happen otherwise
         batch_multipliers_of_same_length = [
@@ -321,7 +381,9 @@ class CLIPTextCustomEmbedder(object):
                                        (1,)).expand(z.shape)
         new_mean = z.mean()
         z *= original_mean / new_mean
-
+        if pooled is not None:
+            z.pooled = pooled
+            
         return z
 
     def get_text_tokens(self, text):
@@ -330,9 +392,9 @@ class CLIPTextCustomEmbedder(object):
             [[1.0] + batch_multipliers[0]]
 
 
-def text_embeddings_equal_len(text_embedder, prompt, negative_prompt):
-    cond_embeddings = text_embedder(prompt)
-    uncond_embeddings = text_embedder(negative_prompt)
+def text_embeddings_equal_len(text_embedder, prompt, negative_prompt, pool):
+    cond_embeddings = text_embedder(prompt, pool)
+    uncond_embeddings = text_embedder(negative_prompt, pool)
 
     cond_len = cond_embeddings.shape[1]
     uncond_len = uncond_embeddings.shape[1]
@@ -346,27 +408,13 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt):
             n = (uncond_len - cond_len) // 77
             return [torch.cat([cond_embeddings] + [text_embedder("")]*n, dim=1), uncond_embeddings]
         
-def text_pooled(text_embedder, positive, negative):
-    cond_embeddings = text_embedder.get_pooled(positive)
-    uncond_embeddings = text_embedder.get_pooled(negative)
-    cond_len = cond_embeddings.shape[1]
-    uncond_len = uncond_embeddings.shape[1]
-    if cond_len == uncond_len:
-        return [cond_embeddings, uncond_embeddings]
-    else:
-        if cond_len > uncond_len:
-            n = (cond_len - uncond_len) // 77
-            return [cond_embeddings, torch.cat([uncond_embeddings] + [text_embedder("")]*n, dim=1)]
-        else:
-            n = (uncond_len - cond_len) // 77
-            return [torch.cat([cond_embeddings] + [text_embedder("")]*n, dim=1), uncond_embeddings]
-        
+
 def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers, require_pooled):
     text_embedder = CLIPTextCustomEmbedder(tokenizer=pipe.tokenizer,
                                            text_encoder=pipe.text_encoder,
                                            device=pipe.text_encoder.device,
                                            clip_stop_at_last_layers=clip_stop_at_last_layers)
-    res = text_embeddings_equal_len(text_embedder, prompt, negative_prompt)
+    res = text_embeddings_equal_len(text_embedder, prompt, negative_prompt, pool=require_pooled)
     nk = {"prompt_embeds":res[0],
           "negative_prompt_embeds":res[1]}
     if require_pooled:
