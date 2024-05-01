@@ -323,7 +323,7 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt):
             return [torch.cat([cond_embeddings] + [text_embedder("")]*n, dim=1), uncond_embeddings]
         
 def text_pooled(text_embedder, positive, negative):
-    cond_embeddings = text_embedder.get_pooled(positve)
+    cond_embeddings = text_embedder.get_pooled(positive)
     uncond_embeddings = text_embedder.get_pooled(negative)
     cond_len = cond_embeddings.shape[1]
     uncond_len = uncond_embeddings.shape[1]
