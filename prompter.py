@@ -185,6 +185,8 @@ class CLIPTextCustomEmbedder(object):
         self.id_start = self.tokenizer.bos_token_id
         self.id_end = self.tokenizer.eos_token_id
         self.id_pad = self.id_end
+        vocab = self.tokenizer.get_vocab()
+        self.comma_token = vocab.get(',</w>', None)
         self.clip_stop_at_last_layers = clip_stop_at_last_layers
 
     def empty_chunk(self):
