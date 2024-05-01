@@ -212,7 +212,6 @@ class CLIPTextCustomEmbedder(object):
     def get_pooled(self, texts):
         device = self.device
         token_ids = self.get_token_ids(texts)
-        token_ids = torch.tensor(token_ids, dtype=torch.long).to(device)
         remade_batch_tokens = token_ids
         z = None
         i = 0
