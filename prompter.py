@@ -355,8 +355,6 @@ class CLIPTextCustomEmbedder(object):
         return torch.hstack(zs)
 
     def process_tokens(self, remade_batch_tokens, batch_multipliers):
-        print(tokens.shape)
-        print(tokens)
         tokens = torch.asarray(remade_batch_tokens).to(self.device)
         # print(tokens.shape)
         # print(tokens)
