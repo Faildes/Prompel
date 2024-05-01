@@ -206,7 +206,7 @@ class CLIPTextCustomEmbedder(object):
 
         parsed = parse_prompt_attention(line)
 
-        tokenized = self.tokenizer([text for text, _ in parsed], truncation=False,add_special_tokens=False)
+        tokenized = self.tokenizer([text for text, _ in parsed], truncation=False,add_special_tokens=False)['input_ids']
 
         chunks = []
         chunk = PromptChunk()
