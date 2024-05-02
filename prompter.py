@@ -1,28 +1,26 @@
 import torch
 import math
+from collections import namedtuple
 import re
 import os
 from safetensors.torch import load_file
 from .block_lora import lbw_lora
 from typing import Union, Optional, List, Tuple
 
+
 re_attention = re.compile(r"""
 \\\(|
-\\\{|
 \\\)|
-\\\}|
 \\\[|
 \\]|
 \\\\|
 \\|
 \(|
-\{|
 \[|
-:([+-]?[.\d]+)\)|
+:\s*([+-]?[.\d]+)\s*\)|
 \)|
-\}|
 ]|
-[^\\()\\{}\[\]:]+|
+[^\\()\[\]:]+|
 :
 """, re.X)
 re_AND = re.compile(r"\bAND\b")
@@ -173,11 +171,17 @@ class PromptChunk:
         self.tokens = []
         self.multipliers = []
         self.fixes = []
+        
+PromptChunkFix = namedtuple('PromptChunkFix', ['offset', 'embedding'])
+"""An object of this type is a marker showing that textual inversion embedding's vectors have to placed at offset in the prompt
+chunk. Those objects are found in PromptChunk.fixes and, are placed into FrozenCLIPEmbedderWithCustomWordsBase.hijack.fixes, and finally
+are applied by sd_hijack.EmbeddingsWithFixes's forward function."""
 
 class CLIPTextCustomEmbedder(object):
     def __init__(self, tokenizer, text_encoder, device,
                  clip_stop_at_last_layers=1):
         self.tokenizer = tokenizer
+        self.transformer
         self.text_encoder = text_encoder
         self.token_mults = {}
         self.device = device
@@ -196,7 +200,23 @@ class CLIPTextCustomEmbedder(object):
         chunk.tokens = [self.id_start] + [self.id_end] * (self.chunk_length + 1)
         chunk.multipliers = [1.0] * (self.chunk_length + 2)
         return chunk
+    
+    def get_target_prompt_token_count(self, token_count):
+        """returns the maximum number of tokens a prompt of a known length can have before it requires one more PromptChunk to be represented"""
 
+        return math.ceil(max(token_count, 1) / self.chunk_length) * self.chunk_length
+
+    def encode_with_transformers(self, tokens):
+        # there's no CLIP Skip here because all hidden layers have size of 1024 and the last one uses a
+        # trained layer to transform those 1024 into 768 for unet; so you can't choose which transformer
+        # layer to work with - you have to use the last
+
+        attention_mask = (tokens != self.id_pad).to(device=tokens.device, dtype=torch.int64)
+        features = self.wrapped(input_ids=tokens, attention_mask=attention_mask)
+        z = features['projection_state']
+
+        return z
+    
     def tokenize_line(self, line):
         """
         this transforms a single prompt into a list of PromptChunk objects - as many as needed to
@@ -206,7 +226,7 @@ class CLIPTextCustomEmbedder(object):
 
         parsed = parse_prompt_attention(line)
 
-        tokenized = self.tokenizer([text for text, _ in parsed], truncation=False,add_special_tokens=False)['input_ids']
+        tokenized = self.tokenizer(texts, truncation=False,add_special_tokens=False)['input_ids']
 
         chunks = []
         chunk = PromptChunk()
@@ -276,51 +296,7 @@ class CLIPTextCustomEmbedder(object):
 
         return chunks, token_count
     
-    def get_token_ids(self, texts):
-        token_ids_list = self.tokenizer(
-            texts,
-            truncation=False,
-            return_tensors=None)['input_ids']
-        return token_ids_list
-
-    def get_pooled(self, texts):
-        device = self.device
-        token_ids = self.get_token_ids(texts)
-        remade_batch_tokens = token_ids
-        z = None
-        i = 0
-        while max(map(len, remade_batch_tokens)) != 0:
-            rem_tokens = [x[75:] for x in remade_batch_tokens]
-
-            tokens = []
-            for j in range(len(remade_batch_tokens)):
-                if len(remade_batch_tokens[j]) > 0:
-                    tokens.append(remade_batch_tokens[j][:75])
-                else:
-                    tokens.append([self.tokenizer.eos_token_id] * 75)
-            rbt = [[self.tokenizer.bos_token_id] + x[:75] +
-                   [self.tokenizer.eos_token_id] for x in remade_batch_tokens]
-            tokens = torch.asarray(rbt).to(self.device)
-            outputs = self.text_encoder(
-                input_ids=tokens, output_hidden_states=True)
-
-            if self.clip_stop_at_last_layers > 1:
-                z1 = self.text_encoder.text_model.final_layer_norm(
-                    outputs.hidden_states[-self.clip_stop_at_last_layers])
-            else:
-                z1 = outputs.last_hidden_state
-
-            z = z1 if z is None else torch.cat((z, z1), axis=-2)
-
-            remade_batch_tokens = rem_tokens
-            i += 1
-
-        return z
-        
-    def process_text(self, texts):
-        if isinstance(texts, str):
-            texts = [texts]
-
+    def process_texts(self, texts):
         token_count = 0
         cache = {}
         batch_chunks = []
@@ -330,18 +306,20 @@ class CLIPTextCustomEmbedder(object):
             else:
                 chunks, current_token_count = self.tokenize_line(line)
                 token_count = max(current_token_count, token_count)
+                
                 cache[line] = chunks
 
             batch_chunks.append(chunks)
 
         return batch_chunks, token_count
 
-    def __call__(self, text, pool=False):
-        batch_chunks, token_count = self.process_text(text)
+    def __call__(self, texts, pool=False):
+        batch_chunks, token_count = self.process_texts(texts)
         z = None
         i = 0
-        zs = []
         chunk_count = max([len(x) for x in batch_chunks])
+        
+        zs = []
         for i in range(chunk_count):
             batch_chunk = [chunks[i] if i < len(chunks) else self.empty_chunk() for chunks in batch_chunks]
             tokens = [x.tokens for x in batch_chunk]
@@ -367,8 +345,7 @@ class CLIPTextCustomEmbedder(object):
                 outputs.hidden_states[-self.clip_stop_at_last_layers])
         else:
             z = outputs.last_hidden_state
-        pooled = getattr(z, 'pooled', None)
-        print(pooled)
+        pooled = outputs.pooler_output
         # restoring original mean is likely not correct, but it seems to work well
         # to prevent artifacts that happen otherwise
         batch_multipliers_of_same_length = [
