@@ -181,7 +181,6 @@ class CLIPTextCustomEmbedder(object):
     def __init__(self, tokenizer, text_encoder, device,
                  clip_stop_at_last_layers=1):
         self.tokenizer = tokenizer
-        self.transformer
         self.text_encoder = text_encoder
         self.token_mults = {}
         self.device = device
