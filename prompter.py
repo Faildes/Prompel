@@ -49,47 +49,6 @@ re_AND = re.compile(r"\bAND\b")
 re_weight = re.compile(r"^((?:\s|.)*?)(?:\s*:\s*([-+]?(?:\d+\.?|\d*\.\d+)))?\s*$")
 re_break = re.compile(r"\s*\bBREAK\b\s*", re.S)
 
-class SdConditioning(list):
-    """
-    A list with prompts for stable diffusion's conditioner model.
-    Can also specify width and height of created image - SDXL needs it.
-    """
-    def __init__(self, prompts, is_negative_prompt=False, width=None, height=None, copy_from=None):
-        super().__init__()
-        self.extend(prompts)
-
-        if copy_from is None:
-            copy_from = prompts
-
-        self.is_negative_prompt = is_negative_prompt or getattr(copy_from, 'is_negative_prompt', False)
-        self.width = width or getattr(copy_from, 'width', None)
-        self.height = height or getattr(copy_from, 'height', None)
-        
-def get_multicond_prompt_list(prompt: str):
-    res_indexes = []
-
-    prompt_indexes = {}
-    subprompts = re_AND.split(prompt)
-
-    indexes = []
-    for subprompt in subprompts:
-        match = re_weight.search(subprompt)
-
-        text, weight = match.groups() if match is not None else (subprompt, 1.0)
-
-        weight = float(weight) if weight is not None else 1.0
-
-        index = prompt_indexes.get(text, None)
-        if index is None:
-            index = len(prompt_flat_list)
-            prompt_flat_list.append(text)
-            prompt_indexes[text] = index
-
-        indexes.append((index, weight))
-
-    res_indexes.append(indexes)
-
-    return res_indexes, prompt_flat_list, prompt_indexes
 
 def parse_prompt_attention(text):
     """
@@ -197,7 +156,7 @@ class CLIPMultiTextCustomEmbedder(object):
     def tokenize_line(self, line):
         def get_target_prompt_token_count(token_count):
             return math.ceil(max(token_count, 1) / 75) * 75
-
+        id_start = self.tokenizer.bos_token_id
         id_end = self.tokenizer.eos_token_id
         parsed = parse_prompt_attention(line)
         tokenized = self.tokenizer(
@@ -207,7 +166,7 @@ class CLIPMultiTextCustomEmbedder(object):
         fixes = []
         remade_tokens = []
         multipliers = []
-
+        
         for tokens, (text, weight) in zip(tokenized, parsed):
             i = 0
             while i < len(tokens):
@@ -579,11 +538,32 @@ def apply_embeddings(pipe, input_str,epath):
 
     return input_str
 
+def bpro(prompt):
+    k = prompt.split(",")
+    thu = []
+    for g in k:
+        f = g.count(" ")
+        thu.append([g, f+1])
+    off = 0
+    nl = []
+    t = 0
+    for x in thu:
+        if "BREAK" in x[0]:
+            tok = t+off
+            add = tok % 75
+            nl += [" "]*add
+            off += add
+            continue
+        t += x[1]
+        nl.append(x[0])
+    return ",".join(nl)
+
 def lora_prompt(prompt, pipe, lpath):
     loras = []
     adap_list=[]
     alphas=[]
     add = []
+    prompt=bpro(prompt)
     def network_replacement(m):
         alias = m.group(1)
         num = m.group(2)
