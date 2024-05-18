@@ -3,7 +3,7 @@ import math
 import re
 import os
 from .block_lora import lbw_lora
-from typing import List
+from typing import Union, Optional, List, Tuple
 from abc import ABC
 
 class BaseTextualInversionManager(ABC):
