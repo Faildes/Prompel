@@ -242,13 +242,11 @@ class CLIPMultiTextCustomEmbedder(object):
             input_ids=tokens, output_hidden_states=True)
 
         if self.clip_stop_at_last_layers > 1:
-            za = self.text_encoder.text_model.final_layer_norm(
-                outputa.hidden_states[11-self.clip_stop_at_last_layers])
-            zb = self.text_encoder_2.text_model.final_layer_norm(
-                outputb.hidden_states[-(2+self.clip_stop_at_last_layers)])
+            za = outputa.hidden_states[11-self.clip_stop_at_last_layers]
+            zb = outputb.hidden_states[-(2+self.clip_stop_at_last_layers)]
         else:
-            za = outputa.last_hidden_state[11]
-            zb = outputb.last_hidden_state[-2]
+            za = outputa.hidden_states[11]
+            zb = outputb.hidden_states[-2]
 
         # restoring original mean is likely not correct, but it seems to work well
         # to prevent artifacts that happen otherwise
