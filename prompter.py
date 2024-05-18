@@ -286,9 +286,7 @@ class CLIPMultiTextCustomEmbedder(object):
             if self.textual_inversion_manager is not None:
                 token_ids = self.textual_inversion_manager.expand_textual_inversion_token_ids_if_necessary(token_ids)
 
-            # add back eos/bos if requested
-            if include_start_and_end_markers:
-                token_ids = [self.tokenizer.bos_token_id] + token_ids + [self.tokenizer.eos_token_id]
+            token_ids = [self.tokenizer.bos_token_id] + token_ids + [self.tokenizer.eos_token_id]
 
             result.append(token_ids)
 
