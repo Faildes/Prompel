@@ -529,7 +529,7 @@ def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers=1, p
     conds, pooled = text_embeddings_equal_len(text_embedder, prompt, negative_prompt)
     return conds, pooled
 
-def apply_embeddings(pipe, input_str,epath):
+def apply_embeddings(pipe, input_str,epath,pool):
     for name, path in epath.items():
         new_string = input_str.replace(name,"")
 
