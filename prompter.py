@@ -616,7 +616,7 @@ def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, cl
     if pool:
         embed_dict={
             'prompt_embeds': conds[0],
-            'pooled_prompt_embeds':pooled[0]
+            'pooled_prompt_embeds':pooled[0],
             'negative_prompt_embeds': conds[1],
             'negative_pooled_prompt_embeds': pooled[1],
         }
