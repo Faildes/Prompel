@@ -511,7 +511,7 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[to
             conditionings[i] = c
     return conditionings, pooled
 
-def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers=1, pool):
+def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers=1, pool=False):
     if pool:
         text_embedder = CLIPMultiTextCustomEmbedder(tokenizer=pipe.tokenizer,
                                                    text_encoder=pipe.text_encoder,
