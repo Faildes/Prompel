@@ -299,7 +299,7 @@ class CLIPMultiTextCustomEmbedder(object):
         token_ids = torch.tensor(token_ids, dtype=torch.long).to(device)
 
         text_encoder_output = self.text_encoder(token_ids, attention_mask, return_dict=True)
-        pooled = [text_encoder_output.pooler_output]
+        pooled = text_encoder_output.pooler_output
         pooled = torch.cat(pooled, dim=-1)
 
         return pooled
@@ -490,7 +490,6 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[to
         emptystring_conditioning = emptystring_conditioning[0]
      
     # ensure all conditioning tensors are 3 dimensions
-    conditionings = [c.unsqueeze(0) if len(c.shape) == 2 else c for c in conditionings]
     c0_shape = conditionings[0].shape
 
     if not all([c.shape[0] == c0_shape[0] and c.shape[2] == c0_shape[2] for c in conditionings]):
