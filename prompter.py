@@ -513,15 +513,15 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[to
 
 def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers=1, pool=False):
     if pool:
-        text_embedder = CLIPMultiTextCustomEmbedder(tokenizer=pipe.tokenizer,
-                                                   text_encoder=pipe.text_encoder,
+        text_embedder = CLIPMultiTextCustomEmbedder(tokenizers=[pipe.tokenizer,pipe.tokenizer_2],
+                                                   text_encoders=[pipe.text_encoder,pipe.text_encoder_2],
                                                    device=pipe.text_encoder.device,
                                                    textual_inversion_manager=DiffusersTextualInversionManager(pipe),
                                                    clip_stop_at_last_layers=clip_stop_at_last_layers,
                                                    requires_pooled=pool)
     else:
-        text_embedder = CLIPTextCustomEmbedder(tokenizers=[pipe.tokenizer,pipe.tokenizer_2],
-                                               text_encoders=[pipe.text_encoder,pipe.text_encoder_2],
+        text_embedder = CLIPTextCustomEmbedder(tokenizer=pipe.tokenizer,
+                                               text_encoder=pipe.text_encoder,
                                                device=pipe.text_encoder.device,
                                                textual_inversion_manager=DiffusersTextualInversionManager(pipe),
                                                clip_stop_at_last_layers=clip_stop_at_last_layers,
