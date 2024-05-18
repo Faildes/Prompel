@@ -534,7 +534,13 @@ def apply_embeddings(pipe, input_str,epath):
         new_string = input_str.replace(name,"")
 
         if new_string != input_str:
-            pipe.load_textual_inversion(pretrained_model_name_or_path=path, token=name, local_files_only=True)
+            if pool:
+                from safetensors.torch import load_file
+                state = load_file(path)
+                pipe.load_textual_inversion(pretrained_model_name_or_path=state["clip_g"], token=name, text_encoder=pipe.text_encoder_2, tokenizer=pipe.tokenizer_2, local_files_only=True)
+                pipe.load_textual_inversion(pretrained_model_name_or_path=state["clip_l"], token=name, text_encoder=pipe.text_encoder, tokenizer=pipe.tokenizer, local_files_only=True)
+            else:
+                pipe.load_textual_inversion(pretrained_model_name_or_path=path, token=name, local_files_only=True)
 
     return input_str
 
@@ -607,8 +613,8 @@ def lora_prompt(prompt, pipe, lpath):
     return prompt, lpath
     
 def create_conditioning(pipe, positive: str, negative: str, epath, lora_list, clip_skip = 1, pool = False):
-    positive = apply_embeddings(pipe, positive, epath)
-    negative = apply_embeddings(pipe, negative, epath)
+    positive = apply_embeddings(pipe, positive, epath, pool)
+    negative = apply_embeddings(pipe, negative, epath, pool)
  
     positive, lora_list = lora_prompt(positive, pipe, lora_list)
 
