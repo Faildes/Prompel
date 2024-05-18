@@ -195,7 +195,7 @@ class CLIPMultiTextCustomEmbedder(object):
             else:
                 remade_tokens, _, multipliers, _ = self.tokenize_line(line)
                 cache[line] = (remade_tokens, multipliers)
-                            remade_batch_tokens.append(remade_tokens)
+            remade_batch_tokens.append(remade_tokens)
             batch_multipliers.append(multipliers)
 
         return batch_multipliers, remade_batch_tokens
