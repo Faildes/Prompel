@@ -262,7 +262,6 @@ class CLIPMultiTextCustomEmbedder(object):
         zb *= batch_multipliers.reshape(batch_multipliers.shape +
                                        (1,)).expand(zb.shape)
         z = torch.concat([za, zb], dim=-1)
-        z = z.to(dtype=self.text_encoder_2.dtype, device=self.device)
         return z
 
     def get_text_tokens(self, text):
