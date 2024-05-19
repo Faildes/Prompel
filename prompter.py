@@ -464,7 +464,7 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[to
     unconds = text_embedder(negative_prompt)
     if text_embedder.requires_pooled:
         conditionings = [conds[0], unconds[0]]
-        pooled = [conds[1], unconds[1]]
+        pooled = [text_embedder.get_pooled_embeddings([prompt], device=text_embedder.device), text_embedder.get_pooled_embeddings([negative_prompt], device=text_embedder.device),]
     else:
         conditionings = [conds,unconds]
         pooled = None
