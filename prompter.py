@@ -228,14 +228,14 @@ class CLIPMultiTextCustomEmbedder(object):
             batch_multipliers = rem_multipliers
             i += 1
 
-        return z, pooled
+        return [z, pooled]
 
     def process_tokens(self, remade_batch_tokens, batch_multipliers):
         remade_batch_tokens = [[self.tokenizer.bos_token_id] + x[:75] +
                                [self.tokenizer.eos_token_id] for x in remade_batch_tokens]
         batch_multipliers = [[1.0] + x[:75] + [1.0] for x in batch_multipliers]
 
-        tokens = torch.asarray(remade_batch_tokens)
+        tokens = torch.asarray(remade_batch_tokens).to(self.device)
         # print(tokens.shape)
         # print(tokens)
         encoder=[self.text_encoder,self.text_encoder_2]
@@ -245,16 +245,14 @@ class CLIPMultiTextCustomEmbedder(object):
         batch_multipliers = torch.asarray(
             batch_multipliers_of_same_length).to(self.device)
         for text_encoder in encoder:
-            output = text_encoder(tokens.to(self.device),output_hidden_states=True)
+            output = text_encoder(input_ids=tokens,output_hidden_states=True)
             pooled=output[0]
             if self.clip_stop_at_last_layers > 1:
                 z = output.hidden_states[-(2+self.clip_stop_at_last_layers)]
             else:
                 z = output.hidden_states[-2]
-            bs_embed, seq_len, _ = z.shape
             z *= batch_multipliers.reshape(batch_multipliers.shape + (1,)).expand(z.shape)
             plist.append(z)
-        
         
         z = torch.concat(plist, dim=-1)
         return z, pooled
@@ -471,17 +469,26 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[to
         conditionings = [conds,unconds]
         pooled = None
     
-    cond_len = conditionings[0].shape[1]
-    uncond_len = conditionings[1].shape[1]
-    if cond_len == uncond_len:
-        return conditionings, pooled
-    else:
-        if cond_len > uncond_len:
-            n = (cond_len - uncond_len) // 77
-            return [conditionings[0], torch.cat([conditionings[1]] + [text_embedder("")]*n, dim=1)],pooled
-        else:
-            n = (uncond_len - cond_len) // 77
-            return [torch.cat([conditionings[0]] + [text_embedder("")]*n, dim=1), conditionings[1]],pooled
+    emptystring_conditioning = text_embedder("")
+    if type(emptystring_conditioning) is tuple:
+        # discard pooled
+        emptystring_conditioning = emptystring_conditioning[0]
+     
+    # ensure all conditioning tensors are 3 dimensions
+    c0_shape = conditionings[0].shape
+
+    if not all([c.shape[0] == c0_shape[0] and c.shape[2] == c0_shape[2] for c in conditionings]):
+        raise ValueError(f"All conditioning tensors must have the same batch size ({c0_shape[0]}) and number of embeddings per token ({c0_shape[1]}")
+    
+    if len(emptystring_conditioning.shape) == 2:
+        emptystring_conditioning = emptystring_conditioning.unsqueeze(0)
+    empty_z = torch.cat([emptystring_conditioning] * c0_shape[0])
+    max_token_count = max([c.shape[1] for c in conditionings])
+    # if necessary, pad shorter tensors out with an emptystring tensor
+    for i, c in enumerate(conditionings):
+        while c.shape[1] < max_token_count:
+            c = torch.cat([c, empty_z], dim=1)
+            conditionings[i] = c
 
 def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers=1, pool=False):
     if pool:
