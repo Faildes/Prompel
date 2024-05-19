@@ -470,7 +470,7 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[to
         pooled = None
     
     emptystring_conditioning = text_embedder("")
-    if type(emptystring_conditioning) is tuple:
+    if type(emptystring_conditioning) is tuple or type(emptystring_conditioning) is list:
         # discard pooled
         emptystring_conditioning = emptystring_conditioning[0]
      
