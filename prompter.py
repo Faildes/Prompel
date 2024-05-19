@@ -245,12 +245,12 @@ class CLIPMultiTextCustomEmbedder(object):
         batch_multipliers = torch.asarray(
             batch_multipliers_of_same_length).to(self.device)
         for text_encoder in encoder:
-            output = text_encoder(tokens.to(self.device),output_hidden_states=True, return_dict=False)
+            output = text_encoder(tokens.to(self.device),output_hidden_states=True)
             pooled=output[0]
             if self.clip_stop_at_last_layers > 1:
-                z = output[-1][-(2+self.clip_stop_at_last_layers)]
+                z = output.hidden_states[-(2+self.clip_stop_at_last_layers)]
             else:
-                z = output[-1][-2]
+                z = output.hidden_states[-2]
             bs_embed, seq_len, _ = z.shape
             z = z.view(bs_embed, seq_len, -1)
             z *= batch_multipliers.reshape(batch_multipliers.shape + (1,)).expand(z.shape)
