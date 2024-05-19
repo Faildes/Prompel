@@ -489,6 +489,7 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[to
         while c.shape[1] < max_token_count:
             c = torch.cat([c, empty_z], dim=1)
             conditionings[i] = c
+    return conditionings, pooled
 
 def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers=1, pool=False):
     if pool:
