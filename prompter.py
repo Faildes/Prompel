@@ -461,24 +461,15 @@ class CLIPTextCustomEmbedder(object):
 
         return pooled
 
-def build_conditioning_tensor(text_embedder, text: str) -> torch.Tensor:
-    get = text_embedder(text)
-    if text_embedder.requires_pooled:
-        conditioning = get[0]
-        pooled = get[1]
-        return conditioning, pooled
-    else:
-        return [get]
-
 def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[torch.Tensor]:
-    conds = build_conditioning_tensor(text_embedder, prompt)
-    unconds = build_conditioning_tensor(text_embedder, negative_prompt)
-    if len(conds)==1:
-        conditionings = [conds,unconds]
-        pooled = None
-    else:
+    conds = text_embedder(prompt)
+    unconds = text_embedder(negative_prompt)
+    if text_embedder.requires_pooled:
         conditionings = [conds[0], unconds[0]]
         pooled = [conds[1], unconds[1]]
+    else:
+        conditionings = [conds,unconds]
+        pooled = None
     
     cond_len = conditionings[0].shape[1]
     uncond_len = conditionings[1].shape[1]
