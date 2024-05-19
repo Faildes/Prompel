@@ -491,10 +491,10 @@ def text_embeddings_equal_len(text_embedder, prompt, negative_prompt) -> List[to
     else:
         if cond_len > uncond_len:
             n = (cond_len - uncond_len) // 77
-            return [cond_embeddings, torch.cat([uncond_embeddings] + [text_embedder("")]*n, dim=1)],pooled
+            return [conditionings[0], torch.cat([conditionings[1]] + [text_embedder("")]*n, dim=1)],pooled
         else:
             n = (uncond_len - cond_len) // 77
-            return [torch.cat([cond_embeddings] + [text_embedder("")]*n, dim=1), uncond_embeddings],pooled
+            return [torch.cat([conditionings[0]] + [text_embedder("")]*n, dim=1), conditionings[1]],pooled
 
 def text_embeddings(pipe, prompt, negative_prompt, clip_stop_at_last_layers=1, pool=False):
     if pool:
