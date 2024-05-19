@@ -204,6 +204,7 @@ class CLIPMultiTextCustomEmbedder(object):
         batch_multipliers, remade_batch_tokens = self.process_text(text)
 
         z = None
+        pooled = None
         i = 0
         while max(map(len, remade_batch_tokens)) != 0:
             rem_tokens = [x[75:] for x in remade_batch_tokens]
@@ -219,50 +220,46 @@ class CLIPMultiTextCustomEmbedder(object):
                     tokens.append([self.tokenizer.eos_token_id] * 75)
                     multipliers.append([1.0] * 75)
 
-            z1 = self.process_tokens(tokens, multipliers)
+            z1, pooly = self.process_tokens(tokens, multipliers)
             z = z1 if z is None else torch.cat((z, z1), axis=-2)
+            pooled = pooly if pooled is None else torch.cat((pooled, pooly), axis=-2)
 
             remade_batch_tokens = rem_tokens
             batch_multipliers = rem_multipliers
             i += 1
 
-        return z
+        return z, pooled
 
     def process_tokens(self, remade_batch_tokens, batch_multipliers):
         remade_batch_tokens = [[self.tokenizer.bos_token_id] + x[:75] +
                                [self.tokenizer.eos_token_id] for x in remade_batch_tokens]
         batch_multipliers = [[1.0] + x[:75] + [1.0] for x in batch_multipliers]
 
-        tokens = torch.asarray(remade_batch_tokens).to(self.device)
+        tokens = torch.asarray(remade_batch_tokens)
         # print(tokens.shape)
         # print(tokens)
-        outputa = self.text_encoder(
-            input_ids=tokens, output_hidden_states=True)
-        outputb = self.text_encoder_2(
-            input_ids=tokens, output_hidden_states=True)
-
-        if self.clip_stop_at_last_layers > 1:
-            za = outputa.hidden_states[11-self.clip_stop_at_last_layers]
-            zb = outputb.hidden_states[-(2+self.clip_stop_at_last_layers)]
-        else:
-            za = outputa.hidden_states[11]
-            zb = outputb.hidden_states[-2]
-
-        # restoring original mean is likely not correct, but it seems to work well
-        # to prevent artifacts that happen otherwise
+        encoder=[self.text_encoder,self.text_encoder_2]
+        plist=[]
         batch_multipliers_of_same_length = [
             x + [1.0] * (75 - len(x)) for x in batch_multipliers]
         batch_multipliers = torch.asarray(
             batch_multipliers_of_same_length).to(self.device)
-        # print(batch_multipliers.shape)
-        # print(batch_multipliers)
-
-        za *= batch_multipliers.reshape(batch_multipliers.shape +
-                                       (1,)).expand(za.shape)
-        zb *= batch_multipliers.reshape(batch_multipliers.shape +
-                                       (1,)).expand(zb.shape)
-        z = torch.concat([za, zb], dim=-1)
-        return z
+        for text_encoder in encoder:
+            output = text_encoder(tokens.to(self.device),output_hidden_states=True, return_dict=False)
+            pooled=output[0]
+            if self.clip_stop_at_last_layers > 1:
+                z = output[-1][-(2+self.clip_stop_at_last_layers)]
+            else:
+                z = output[-1][-2]
+            bs_embed, seq_len, _ = z.shape
+            z = z.view(bs_embed, seq_len, -1)
+            z *= batch_multipliers.reshape(batch_multipliers.shape + (1,)).expand(z.shape)
+            plist.append(z)
+        
+        
+        z = torch.concat(plist, dim=-1)
+        pooled = pooled.view(bs_embed, -1)
+        return z, pooled
 
     def get_text_tokens(self, text):
         batch_multipliers, remade_batch_tokens = self.process_text(text)
@@ -469,8 +466,7 @@ class CLIPTextCustomEmbedder(object):
 def build_conditioning_tensor(text_embedder, text: str) -> torch.Tensor:
     conditioning = text_embedder(text)
     if text_embedder.requires_pooled:
-        pooled = text_embedder.get_pooled_embeddings([text], device=text_embedder.device)
-        return conditioning, pooled
+        return conditioning
     else:
         return [conditioning]
 
